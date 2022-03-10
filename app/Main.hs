@@ -1,4 +1,5 @@
 import Data.Char
+import Control.Monad.Trans.Maybe
 
 -- TIC TAC TOE
 -- Create a game that replicates TIC TAC TOE that involves getting user input
@@ -73,57 +74,36 @@ chooseCharacter = do
                         _ -> do
                             chooseCharacter
 
-runGame :: [(Int, Row)] -> String -> IO()
-runGame positions character = do
-                              putStrLn ""
-                              putStrLn "Let the games begin!"
-                              let characterName = getFullCharacterName character
-                              putStrLn ("Your move " ++ characterName)
-                              enterPosition 0 positions character
-
 enterPosition :: Int -> [(Int, Row)] -> String -> IO()
 enterPosition count positions character = do
                                     putStrLn ""
                                     generateTable positions
                                     putStrLn ""
-                                    putStr "Enter coordinates: "
-                                    positionChosen <- getLine
-                                    let coordinateValid = isCoordinateValid positionChosen
-                                    let isTaken = isPositionTaken positionChosen positions
-                                    if coordinateValid && not isTaken
-                                        then do
-                                            let newPosition = addPosition positionChosen character positions
-                                            case newPosition of
-                                                Just value -> do
-                                                    generateTable value
-                                                    let hasWinner = checkForWinner character value
-                                                    if hasWinner
-                                                        then do
-                                                            let characterName = getFullCharacterName character
-                                                            putStrLn ""
-                                                            putStrLn (characterName ++ " is the winner!")
-                                                            return ()
-                                                        else do
-                                                            if count == 8
-                                                                then do
-                                                                    putStrLn ""
-                                                                    putStrLn "It's a draw!"
-                                                                    return ()
-                                                                else do
-                                                                    let newCharacter = switchCharacter character
-                                                                    let characterName = getFullCharacterName newCharacter
-                                                                    putStrLn ""
-                                                                    putStrLn ("Your move " ++ characterName)
-                                                                    let newCount = count + 1
-                                                                    enterPosition newCount value newCharacter
-                                                Nothing -> do
-                                                    putStrLn ""
-                                                    putStrLn "ERROR: Please enter a valid coordinate e.g. A2, C3"
-                                                    enterPosition count positions character
-                                        else do
-                                            putStrLn ""
-                                            putStrLn "ERROR: Please enter a valid coordinate e.g. A2, C3"
-                                            enterPosition count positions character
+                                    newPosition <- runMaybeT $ do
+                                        positionEntered <- askPosition positions
+                                        positionCoordinate <- parsePosition positionEntered
+                                        verifiedPosition <- getPositionIfNotTaken positionCoordinate positions
+                                        addPosition verifiedPosition character positions
+                                    case newPosition of
+                                        Nothing -> enterPosition count positions character
+                                        Just value -> do
+                                            let hasWinner = checkForWinner character value
+                                            if hasWinner 
+                                                then showWinner character
+                                                else handleIfDraw count value character
+
+-- Asking Position
+
+askPosition :: [(Int, Row)] -> MaybeT IO String
+askPosition positions = MaybeT $ do
+    putStrLn "Enter coordinates (e.g. A1, B2): "
+    positionChosen <- getLine
+    let inputValid = isPositionValid positionChosen
+    if inputValid
+        then return $ Just positionChosen
+        else do
+            putStrLn "\nERROR: Please enter a valid coordinate e.g. A1, C3"
+            return Nothing
 
 isCoordinateValid :: String -> Bool
 isCoordinateValid "" = False
@@ -132,22 +112,94 @@ isCoordinateValid coordinates = (length coordinates == 2) && (do
                                     let hasCorrectNumber = last coordinates `elem` ['1', '2', '3']
                                     hasCorrectAlphabet && hasCorrectNumber)
 
+isPositionValid :: String -> Bool
+isPositionValid "" = False
+isPositionValid coordinates = (length coordinates == 2) && (do
+                                    let hasCorrectAlphabet = head coordinates `elem` ['A', 'B', 'C']
+                                    let hasCorrectNumber = last coordinates `elem` ['1', '2', '3']
+                                    hasCorrectAlphabet && hasCorrectNumber)
+
+getPositionIfNotTaken :: (Int, Int) -> [(Int, Row)] -> MaybeT IO (Int, Int)
+getPositionIfNotTaken coordinates positions = MaybeT $ do
+    let characterAtRow = getValueInRow coordinates positions
+    case characterAtRow of
+        Just value -> do
+            if value == "x" || value == "o"
+                then do 
+                    putStrLn "\nERROR: Position taken. Please enter a valid coordinate e.g. A2, C3"
+                    return Nothing
+                else return $ Just coordinates
+        Nothing -> do
+            putStrLn "\nERROR: Position taken. Please enter a valid coordinate e.g. A2, C3"
+            return Nothing
+
+getValueInRow :: (Int, Int) -> [(Int, Row)] -> Maybe String
+getValueInRow coordinates positions
+                                    | xValue == 1 = Just (a $ findRow yValue positions)
+                                    | xValue == 2 = Just (b $ findRow yValue positions)
+                                    | xValue == 3 = Just (c $ findRow yValue positions)
+                                    | otherwise = Nothing
+                                    where
+                                        xValue = fst coordinates
+                                        yValue = snd coordinates
+
+parsePosition :: String -> MaybeT IO (Int, Int)
+parsePosition position = MaybeT $ do
+    let xValue = alphabetToIndex $ head position
+    case xValue of
+        Just value -> return $ Just (value, digitToInt $ last position)
+        Nothing -> do
+            putStrLn "\nERROR: Failed to parse position. Please enter a valid coordinate e.g. A2, C3"
+            return Nothing
+
+alphabetToIndex :: Char -> Maybe Int
+alphabetToIndex alphabet
+                         | alphabet == 'A' = Just 1
+                         | alphabet == 'B' = Just 2
+                         | alphabet == 'C' = Just 3
+                         | otherwise = Nothing
+
+-- Updating Table
+
+addPosition :: (Int, Int) -> String -> [(Int, Row)] -> MaybeT IO [(Int, Row)]
+addPosition position character database = MaybeT $ do
+    let updatedDatabase = updateDatabase position character database
+    generateTable updatedDatabase
+    return $ Just updatedDatabase
+
+updateDatabase :: (Int, Int) -> String -> [(Int, Row)] -> [(Int, Row)]
+updateDatabase coordinates character = map modify
+    where modify (yValue, row)
+            | yValue == snd coordinates = do
+                                          let updatedRow = updateRow (fst coordinates) character row
+                                          (snd coordinates, updatedRow)
+            | otherwise = (yValue, row)
+
+updateRow :: Int -> String -> Row -> Row
+updateRow index character row
+                              | index == 1 = row { a = character }
+                              | index == 2 = row { b = character }
+                              | index == 3 = row { c = character }
+                              | otherwise = row
+
+-- Miscelaneous
+
+getCharacterName :: String -> Maybe String
+getCharacterName alphabet
+                         | alphabet == "o" = Just "Noughts (o)"
+                         | alphabet == "x" = Just "Crosses (x)"
+                         | otherwise = Nothing
+
 switchCharacter :: String -> String
 switchCharacter current
                       | current == "o" = "x"
                       | current == "x" = "o"
                       | otherwise = current
 
-isPositionTaken :: String -> [(Int, Row)] -> Bool
-isPositionTaken coordinates positions = do
-                          let target = parsePosition coordinates
-                          case target of
-                              Just value -> do
-                                  let characterAtRow = getValueInRow value positions
-                                  case characterAtRow of
-                                    Just value -> value == "x" || value == "o"
-                                    Nothing -> False
-                              Nothing -> False
+-- Ending Game
+
+isGameDraw :: Int -> Bool
+isGameDraw count = count == 8
 
 checkForWinner :: String -> [(Int, Row)] -> Bool
 checkForWinner character positions
@@ -171,59 +223,47 @@ checkForWinner character positions
                                     c2 = c $ findRow 2 positions
                                     c3 = c $ findRow 3 positions
 
-addPosition :: String -> String -> [(Int, Row)] -> Maybe [(Int, Row)]
-addPosition position character database = do
-                                 let target = parsePosition position
-                                 case target of
-                                     Just value -> do
-                                         Just $ updateDatabase value character database
-                                     Nothing -> Nothing
+handleIfDraw :: Int -> [(Int, Row)] -> String -> IO()
+handleIfDraw count positions character = do
+    let isDraw = isGameDraw count
+    if isDraw
+        then do
+            putStrLn "\nIt's a draw!"
+            return ()
+        else do
+            reenterPosition count positions character
 
-updateDatabase :: (Int, Int) -> String -> [(Int, Row)] -> [(Int, Row)]
-updateDatabase coordinates character = map modify
-    where modify (yValue, row)
-            | yValue == snd coordinates = do
-                                          let updatedRow = updateRow (fst coordinates) character row
-                                          (snd coordinates, updatedRow)
-            | otherwise = (yValue, row)
+reenterPosition :: Int -> [(Int, Row)] -> String -> IO()
+reenterPosition count positions character = do
+    let newCharacter = switchCharacter character
+    let characterName = getCharacterName newCharacter
+    case characterName of
+      Nothing -> putStrLn "\nERROR: Unidentified character"
+      Just value -> do 
+          putStrLn ("\nYour move " ++ value)
+          let newCount = count + 1
+          enterPosition newCount positions newCharacter
+    
+showWinner :: String -> IO()
+showWinner character = do
+    let characterName = getCharacterName character
+    case characterName of
+      Nothing -> putStrLn "\nERROR: Failed to show winner"
+      Just value -> do
+        putStrLn ("\n" ++ value ++ " is the winner!")
+        return ()
 
-updateRow :: Int -> String -> Row -> Row
-updateRow index character row
-                              | index == 1 = row { a = character }
-                              | index == 2 = row { b = character }
-                              | index == 3 = row { c = character }
-                              | otherwise = row
+-- Run
 
-getValueInRow :: (Int, Int) -> [(Int, Row)] -> Maybe String
-getValueInRow coordinates positions
-                                    | xValue == 1 = Just (a $ findRow yValue positions)
-                                    | xValue == 2 = Just (b $ findRow yValue positions)
-                                    | xValue == 3 = Just (c $ findRow yValue positions)
-                                    | otherwise = Nothing
-                                    where
-                                        xValue = fst coordinates
-                                        yValue = snd coordinates
-
-parsePosition :: String -> Maybe (Int, Int)
-parsePosition "" = Nothing
-parsePosition position = do
-                        let xValue = alphabetToIndex $ head position
-                        case xValue of
-                            Just value -> do Just (value, digitToInt $ last position)
-                            Nothing -> Nothing
-
-alphabetToIndex :: Char -> Maybe Int
-alphabetToIndex alphabet
-                         | alphabet == 'A' = Just 1
-                         | alphabet == 'B' = Just 2
-                         | alphabet == 'C' = Just 3
-                         | otherwise = Nothing
-
-getFullCharacterName :: String  -> String
-getFullCharacterName alphabet
-                         | alphabet == "o" = "Noughts (o)"
-                         | alphabet == "x" = "Crosses (x)"
-                         | otherwise = ""
+runGame :: [(Int, Row)] -> String -> IO()
+runGame positions character = do
+                              putStrLn "\nLet the games begin!"
+                              let characterName = getCharacterName character
+                              case characterName of
+                                Nothing -> putStrLn "\nERROR: Unidentified character"
+                                Just value -> do
+                                    putStrLn ("\nYour move " ++ value)
+                                    enterPosition 0 positions character
 
 main :: IO ()
 main = do
