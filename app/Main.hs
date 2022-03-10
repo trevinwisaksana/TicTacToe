@@ -66,10 +66,14 @@ chooseCharacter = do
                     characterSelected <- getLine
                     case characterSelected of
                         "o" -> do
-                            putStrLn "You have chosen Noughts (O)"
+                            let text = "You have chosen Noughts (O)"
+                            putStrLn text
+                            logText text
                             return characterSelected
                         "x" -> do
-                            putStrLn "You have chosen Crosses (X)"
+                            let text = "You have chosen Crosses (X)"
+                            putStrLn text
+                            logText text
                             return characterSelected
                         _ -> do
                             chooseCharacter
@@ -100,7 +104,9 @@ askPosition positions = MaybeT $ do
     positionChosen <- getLine
     let inputValid = isPositionValid positionChosen
     if inputValid
-        then return $ Just positionChosen
+        then do
+            logText positionChosen
+            return $ Just positionChosen
         else do
             putStrLn "\nERROR: Please enter a valid coordinate e.g. A1, C3"
             return Nothing
@@ -196,6 +202,9 @@ switchCharacter current
                       | current == "x" = "o"
                       | otherwise = current
 
+logText :: String -> IO()
+logText text = appendFile "lot.txt" ("\n" ++ text)
+
 -- Ending Game
 
 isGameDraw :: Int -> Bool
@@ -228,7 +237,9 @@ handleIfDraw count positions character = do
     let isDraw = isGameDraw count
     if isDraw
         then do
-            putStrLn "\nIt's a draw!"
+            let text = "\nIt's a draw!"
+            putStrLn text
+            logText text
             return ()
         else do
             reenterPosition count positions character
@@ -250,8 +261,10 @@ showWinner character = do
     case characterName of
       Nothing -> putStrLn "\nERROR: Failed to show winner"
       Just value -> do
-        putStrLn ("\n" ++ value ++ " is the winner!")
-        return ()
+          let text = "\n" ++ value ++ " is the winner!"
+          putStrLn text
+          logText text
+          return ()
 
 -- Run
 
