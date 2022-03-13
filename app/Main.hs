@@ -2,6 +2,7 @@ import Data.Char
 import Control.Monad.Trans.Maybe
 import Control.Monad.Trans.Writer
 import Control.Monad.Reader
+import Control.Monad.State
 
 -- TIC TAC TOE
 -- Create a game that replicates TIC TAC TOE that involves getting user input
@@ -26,25 +27,29 @@ database = [(1, Row { a = "_", b = "_", c = "_" }),
 
 generateTable :: [(Int, Row)] -> IO()
 generateTable [] = do
+                     putStrLn ""
                      putStrLn "   A   B   C "
                      putStrLn "1 ___|___|___"
                      putStrLn "2 ___|___|___"
                      putStrLn "3    |   |   "
+                     putStrLn ""
 generateTable positions = do
-                          putStrLn "   A   B   C "
-                          putStrLn ("1 _" ++ a1 ++ "_|_" ++ b1 ++ "_|_" ++ c1 ++ "_")
-                          putStrLn ("2 _" ++ a2 ++ "_|_" ++ b2 ++ "_|_" ++ c2 ++ "_")
-                          putStrLn ("3  " ++ a3 ++ " | " ++ b3 ++ " | " ++ c3 ++ " ")
-                          where
-                              a1 = a $ findRow 1 positions
-                              a2 = a $ findRow 2 positions
-                              a3 = a $ findRow 3 positions
-                              b1 = b $ findRow 1 positions
-                              b2 = b $ findRow 2 positions
-                              b3 = b $ findRow 3 positions
-                              c1 = c $ findRow 1 positions
-                              c2 = c $ findRow 2 positions
-                              c3 = c $ findRow 3 positions
+    putStrLn ""
+    putStrLn "   A   B   C "
+    putStrLn ("1 _" ++ a1 ++ "_|_" ++ b1 ++ "_|_" ++ c1 ++ "_")
+    putStrLn ("2 _" ++ a2 ++ "_|_" ++ b2 ++ "_|_" ++ c2 ++ "_")
+    putStrLn ("3  " ++ a3 ++ " | " ++ b3 ++ " | " ++ c3 ++ " ")
+    putStrLn ""
+    where
+        a1 = a $ findRow 1 positions
+        a2 = a $ findRow 2 positions
+        a3 = a $ findRow 3 positions
+        b1 = b $ findRow 1 positions
+        b2 = b $ findRow 2 positions
+        b3 = b $ findRow 3 positions
+        c1 = c $ findRow 1 positions
+        c2 = c $ findRow 2 positions
+        c3 = c $ findRow 3 positions
 
 findRow :: Int -> [(Int, Row)] -> Row
 findRow index database = do
@@ -83,23 +88,21 @@ verifyCharacterSelected character
                                 return Nothing
 
 enterPosition :: Int -> [(Int, Row)] -> String -> IO()
-enterPosition count positions character = do
-                                    putStrLn ""
-                                    generateTable positions
-                                    putStrLn ""
-                                    verifiedPosition <- runMaybeT $ do
-                                        positionEntered <- askPosition
-                                        positionCoordinate <- parsePosition positionEntered
-                                        getPositionIfNotTaken positionCoordinate positions
-                                    case verifiedPosition of
-                                        Nothing -> enterPosition count positions character
-                                        Just value -> do
-                                            let updatedDatabase = updateDatabase value character positions
-                                            generateTable updatedDatabase
-                                            let hasWinner = checkForWinner character updatedDatabase
-                                            if hasWinner
-                                                then showWinner character
-                                                else handleIfDraw count updatedDatabase character
+enterPosition count positions character = do 
+    generateTable positions 
+    verifiedPosition <- runMaybeT $ do
+        positionEntered <- askPosition
+        positionCoordinate <- parsePosition positionEntered
+        getPositionIfNotTaken positionCoordinate positions
+    case verifiedPosition of
+        Nothing -> enterPosition count positions character
+        Just value -> do
+            let updatedDatabase = updateDatabase value character positions
+            generateTable updatedDatabase
+            let hasWinner = checkForWinner character updatedDatabase
+            if hasWinner
+                then showWinner character
+                else handleIfDraw count updatedDatabase character
 
 -- Asking Position
 
@@ -194,17 +197,26 @@ updateRow index character row
 
 -- Miscelaneous
 
-getCharacterName :: String -> Maybe String
-getCharacterName alphabet
-                         | alphabet == "o" = Just "Noughts (o)"
-                         | alphabet == "x" = Just "Crosses (x)"
-                         | otherwise = Nothing
+showNextPlayer :: Reader String String
+showNextPlayer = do
+    characterName <- getCharacterName
+    return ("Your move " ++ characterName)
 
-switchCharacter :: String -> String
-switchCharacter current
-                      | current == "o" = "x"
-                      | current == "x" = "o"
-                      | otherwise = current
+getCharacterName :: Reader String String
+getCharacterName = do
+    alphabet <- ask
+    let result | alphabet == "o" = "Noughts (o)" 
+               | alphabet == "x" = "Crosses (x)" 
+               | otherwise = alphabet
+    return result
+
+getNextPlayer :: Reader String String
+getNextPlayer = do
+    current <- ask
+    let result | current == "o" = "x" 
+               | current == "x" = "o" 
+               | otherwise = "-"
+    return result
 
 logText :: String -> IO()
 logText text = putStrLn ("\n" ++ text) >> appendFile "lot.txt" ("\n" ++ text)
@@ -248,38 +260,35 @@ handleIfDraw count positions character = do
 
 reenterPosition :: Int -> [(Int, Row)] -> String -> IO()
 reenterPosition count positions character = do
-    let newCharacter = switchCharacter character
-    let characterName = getCharacterName newCharacter
-    case characterName of
-      Nothing -> logText "ERROR: Unidentified character"
-      Just value -> do
-          logText ("Your move " ++ value)
-          let newCount = count + 1
-          enterPosition newCount positions newCharacter
-
+    let newCharacter = runReader getNextPlayer character
+    logText $ runReader showNextPlayer newCharacter
+    enterPosition (count + 1) positions newCharacter
+          
 showWinner :: String -> IO()
-showWinner character = do
-    let characterName = getCharacterName character
-    case characterName of
-      Nothing -> logText "ERROR: Failed to show winner"
-      Just value -> do
-          logText (value ++ " is the winner!")
-          return ()
+showWinner character = logText $ runReader getCharacterName character ++ " is the winner!"
 
 -- Run
 
-runGame :: [(Int, Row)] -> String -> IO()
-runGame positions character = do
-                              putStrLn "\nLet the games begin!"
-                              let characterName = getCharacterName character
-                              case characterName of
-                                Nothing -> logText "ERROR: Unidentified character"
-                                Just value -> do
-                                    logText ("Your move " ++ value)
-                                    enterPosition 0 positions character
+data GameState = GameState
+  { positions :: [(Int, Row)]
+  , character :: String
+  , numberOfTurns :: Int
+  } deriving (Show)
+
+runGame :: StateT GameState IO ()
+runGame = do 
+    state <- get
+    let characterSelected = character state
+    let database = positions state
+    let count = numberOfTurns state
+    lift $ putStrLn "\nLet the games begin!"
+    let fullCharacterName = runReader getCharacterName characterSelected
+    lift $ logText ("Your move " ++ fullCharacterName)
+    lift $ enterPosition count database characterSelected
 
 main :: IO ()
 main = do
         displayTutorial
         characterChosen <- chooseCharacter
-        runGame database characterChosen
+        execStateT runGame $ GameState database characterChosen 0
+        return ()
